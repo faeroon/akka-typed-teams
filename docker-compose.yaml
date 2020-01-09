@@ -1,0 +1,40 @@
+version: '2'
+
+services:
+  teams-node-1:
+    container_name: teams-node-1
+    image: example/teams-cluster:latest
+    depends_on:
+      - teams-cassandra
+    ports:
+      - "7575:7575"
+      - "25521:25521"
+    environment:
+      - TEAMS_HOST=teams-node-1
+      - TEAMS_ARTERY_PORT=25521
+      - TEAMS_WEB_PORT=7575
+      - TEAMS_CASSANDRA_HOST=teams-cassandra
+      - TEAMS_CASSANDRA_PORT=9042
+      - TEAMS_SEED_NODES.0=akka://WebApp@teams-node-1:25521
+      - TEAMS_SEED_NODES.1=akka://WebApp@teams-node-2:25521
+  teams-node-2:
+    container_name: teams-node-2
+    image: example/teams-cluster:latest
+    depends_on:
+      - teams-cassandra
+    ports:
+      - "7576:7575"
+      - "25522:25521"
+    environment:
+      - TEAMS_HOST=teams-node-2
+      - TEAMS_ARTERY_PORT=25521
+      - TEAMS_WEB_PORT=7575
+      - TEAMS_CASSANDRA_HOST=teams-cassandra
+      - TEAMS_CASSANDRA_PORT=9042
+      - TEAMS_SEED_NODES.0=akka://WebApp@teams-node-1:25521
+      - TEAMS_SEED_NODES.1=akka://WebApp@teams-node-2:25521
+  teams-cassandra:
+    container_name: teams-cassandra
+    image: cassandra:3.11
+    ports:
+    - "9042:9042"
