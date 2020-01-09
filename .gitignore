@@ -1,0 +1,11 @@
+.DS_Store
+.idea
+build
+.gradle
+*.iml
+*.log
+
+*.war
+
+target/
+out
