@@ -24,20 +24,19 @@ shadowJar {
 
 repositories {
     mavenCentral()
-    jcenter()
     mavenLocal()
 }
 
 ext {
     scalaVersion = "2.13.1"
-    akkaVersion = "2.6.1"
+    akkaVersion = "2.6.5"
     akkaHttpVersion = "10.1.11"
     logbackVersion = "1.2.3"
     catsVersion = "2.1.0"
     circeVersion = "0.12.3"
     circeExtrasVersion = "0.12.2"
     akkaHttpCirceVersion = "1.30.0"
-    cassandraDriverVersion = "3.8.0"
+    cassandraDriverVersion = "4.6.0"
 }
 
 dependencies {
@@ -64,7 +63,8 @@ dependencies {
     implementation("io.circe:circe-parser_2.13:$circeVersion")
     implementation("io.circe:circe-generic-extras_2.13:$circeExtrasVersion")
 
-    implementation("com.datastax.cassandra:cassandra-driver-core:$cassandraDriverVersion")
+    implementation("com.datastax.oss:java-driver-core:$cassandraDriverVersion")
+    implementation("com.datastax.oss:java-driver-query-builder:$cassandraDriverVersion")
 
     implementation("ch.qos.logback:logback-classic:$logbackVersion")
 

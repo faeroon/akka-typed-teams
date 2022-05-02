@@ -8,23 +8,23 @@ import akka.cluster.sharding.typed.HashCodeNoEnvelopeMessageExtractor
 import akka.cluster.sharding.typed.scaladsl.{ClusterSharding, Entity, EntityTypeKey}
 import akka.cluster.typed.Cluster
 import akka.http.scaladsl.Http
-import akka.http.scaladsl.model.ContentTypes._
-import akka.http.scaladsl.model.headers.`Content-Type`
-import akka.http.scaladsl.model.{HttpResponse, StatusCodes}
-import akka.http.scaladsl.server.{Directives, Route}
+import akka.http.scaladsl.model.{ContentTypes, HttpEntity, HttpResponse, StatusCodes}
+import akka.http.scaladsl.server.{Directives, Route, StandardRoute}
 import akka.stream.Materializer
 import akka.util.Timeout
+import com.datastax.oss.driver.api.core.CqlSession
 import com.typesafe.config.{Config, ConfigFactory}
 import de.heikoseeberger.akkahttpcirce.FailFastCirceSupport._
 import io.circe.syntax._
 import org.example.teams.TeamJsonCoders._
-import org.example.teams.cassandra.CassandraSchemaManager
-import org.example.teams.request.CreateTeamRequest
+import org.example.teams.request.{AddTeamMemberRequest, CreateTeamRequest}
 import org.slf4j.LoggerFactory
 
 import scala.concurrent.ExecutionContext
 import scala.concurrent.duration._
-import scala.util.{Failure, Success}
+import scala.util.{Failure, Success, Try}
+import scala.jdk.CollectionConverters._
+import scala.compat.java8.FutureConverters._
 
 /**
  * @author Denis Pakhomov.
@@ -36,6 +36,7 @@ object WebApp extends Directives {
   }
 
   val config: Config = ConfigFactory.load()
+  val appConfig: AppConfig = AppConfig.fromHocon(config)
 
   implicit val system: ActorSystem[Nothing] = ActorSystem[Nothing](RootBehavior(), "WebApp", config)
 
@@ -55,51 +56,142 @@ object WebApp extends Directives {
 
   val sharding: ClusterSharding = ClusterSharding(system)
 
+  private def mapResponse(result: Try[TeamBehavior.Response]): StandardRoute = result match {
+
+    case Success(TeamBehavior.TeamCreated) => complete(StatusCodes.Created)
+
+    case Success(TeamBehavior.TeamUpdated) => complete(StatusCodes.OK)
+
+    case Success(TeamBehavior.TeamState(team)) => complete(
+      HttpResponse(
+        status = StatusCodes.OK,
+        entity = HttpEntity(
+          contentType = ContentTypes.`application/json`,
+          string = team.asJson.toString()
+        )
+      )
+    )
+
+    case Success(TeamBehavior.InvalidState(message)) => complete(
+      HttpResponse(
+        status = StatusCodes.Conflict,
+        entity = HttpEntity(
+          contentType = ContentTypes.`application/json`,
+          string = ErrorResponse(
+            code = "INVALID_STATE",
+            message = message
+          )
+            .asJson
+            .toString()
+        )
+      )
+    )
+
+    case Success(TeamBehavior.TeamNotFound(teamId)) => complete(
+      HttpResponse(
+        status = StatusCodes.NotFound,
+        entity = HttpEntity(
+          contentType = ContentTypes.`application/json`,
+          string = ErrorResponse(
+            code = "NOT_FOUND",
+            message = s"team with id=${teamId.value} is not found in DB"
+          )
+            .asJson
+            .toString()
+        )
+      )
+    )
+
+    case Success(TeamBehavior.DbError(message)) => complete(
+      HttpResponse(
+        status = StatusCodes.Conflict,
+        entity = HttpEntity(
+          contentType = ContentTypes.`application/json`,
+          string = ErrorResponse(
+            code = "DB_ERROR",
+            message = message
+          )
+            .asJson
+            .toString()
+        )
+      )
+    )
+
+    case Failure(exception) => complete(
+      HttpResponse(
+        status = StatusCodes.InternalServerError,
+        entity = HttpEntity(
+          contentType = ContentTypes.`application/json`,
+          string = ErrorResponse(
+            code = "CRITICAL_ERROR",
+            message = exception.getMessage
+          )
+            .asJson
+            .toString()
+        )
+      )
+    )
+  }
+
   def serverRoutes(shardRegion: ActorRef[TeamBehavior.Command]): Route = concat(
     path("teams") {
       post {
         entity(as[CreateTeamRequest]) { request =>
 
-          val result = shardRegion.ask[TeamBehavior.Response](
-            ref => TeamBehavior.CreateTeam(TeamId(request.teamName), request.leader, ref)
+          val result = shardRegion.ask[TeamBehavior.Response](ref =>
+            TeamBehavior.CreateTeam(TeamId(request.teamId), request.leader, ref)
           )
 
-          onComplete(result) {
-            case Success(TeamBehavior.TeamCreated) => complete(StatusCodes.Created)
-            case Success(TeamBehavior.InvalidState) => complete(StatusCodes.Forbidden)
-            case Success(_) => complete(StatusCodes.BadRequest)
-            case Failure(exception) =>
-              system.log.info("create team exception", exception)
-              complete(StatusCodes.BadRequest)
-          }
+          onComplete(result)(mapResponse)
         }
       }
     },
-    path("teams" / Segment / "info") { teamName =>
+    path("teams" / Segment / "info") { teamId =>
       get {
 
-        val result = shardRegion.ask[TeamBehavior.Response](ref => TeamBehavior.GetState(TeamId(teamName), ref))
+        val result = shardRegion.ask[TeamBehavior.Response](ref => TeamBehavior.GetState(TeamId(teamId), ref))
 
-        onComplete(result) {
+        onComplete(result)(mapResponse)
+      }
+    },
+    path("teams" / Segment / "members" / "add") { teamId =>
+      put {
+        entity(as[AddTeamMemberRequest]) { request =>
 
-          case Success(TeamBehavior.TeamState(team)) =>
-            complete(HttpResponse(
-              status = StatusCodes.OK,
-              headers = List(`Content-Type`(`application/json`)),
-              entity = team.asJson.toString()
-            ))
+          val result = shardRegion.ask[TeamBehavior.Response](ref =>
+            TeamBehavior.AddTeamMember(TeamId(teamId), request.memberId, ref)
+          )
 
-          case Success(TeamBehavior.InvalidState) =>
-            complete(StatusCodes.NotFound)
-
-          case Failure(exception) =>
-            system.log.info("get team exception", exception)
-            complete(StatusCodes.BadRequest)
-
-          case _ => complete(StatusCodes.NotImplemented)
-
+          onComplete(result)(mapResponse)
         }
+      }
+    },
+    path("teams" / Segment / "members" / "kick") { teamId =>
+      put {
+        entity(as[AddTeamMemberRequest]) { request =>
 
+          val result = shardRegion.ask[TeamBehavior.Response](ref =>
+            TeamBehavior.KickTeamMember(TeamId(teamId), request.memberId, ref)
+          )
+
+          onComplete(result)(mapResponse)
+        }
+      }
+    },
+    path("teams" / Segment / "start-match") { teamId =>
+      put {
+        val result = shardRegion.ask[TeamBehavior.Response](ref => TeamBehavior.StartMatch(TeamId(teamId), ref))
+        onComplete(result)(mapResponse)
+      }
+    },
+    path("teams" / Segment / "finish-match") { teamId =>
+      val result = shardRegion.ask[TeamBehavior.Response](ref => TeamBehavior.FinishMatch(TeamId(teamId), ref))
+      onComplete(result)(mapResponse)
+    },
+    path("teams" / Segment) { teamId =>
+      delete {
+        val result = shardRegion.ask[TeamBehavior.Response](ref => TeamBehavior.Remove(TeamId(teamId), ref))
+        onComplete(result)(mapResponse)
       }
     }
   )
@@ -111,23 +203,16 @@ object WebApp extends Directives {
     logger.info("artery host: {}", config.getString("akka.remote.artery.canonical.hostname"))
     logger.info("artery port: {}", config.getInt("akka.remote.artery.canonical.port"))
 
-    logger.info("web host: {}", config.getString("web.host"))
-    logger.info("web port: {}", config.getInt("web.port"))
+    logger.info("web host: {}", appConfig.web.host)
+    logger.info("web port: {}", appConfig.web.port)
 
     implicit val classicSystem: akka.actor.ActorSystem = system.toClassic
     implicit val materializer: Materializer = Materializer.matFromSystem(system)
 
-
-    val cassandraManager = new CassandraSchemaManager(
-      host = config.getString("cassandra.host"),
-      port = config.getInt("cassandra.port")
-    )
-
     val bindingFuture = for {
-      session <- cassandraManager.startSessionWithRetries
-      _ <- cassandraManager.initSchema(session).recover(_ => ())
 
-      teamsRepository = new CassandraTeamsRepository(session)
+      session <- CqlSession.builder().addContactPoints(appConfig.cassandra.nodes.asJava).buildAsync().toScala
+      teamsRepository <- CassandraTeamRepository.prepare(session)
 
       shardRegion: ActorRef[TeamBehavior.Command] = sharding.init(
         Entity(TeamBehaviorTypeKey) { context => TeamBehavior(TeamId(context.entityId), teamsRepository) }
@@ -137,11 +222,7 @@ object WebApp extends Directives {
 
       routes: Route = serverRoutes(shardRegion)
 
-      binding <- Http().bindAndHandle(
-        handler = routes,
-        interface = config.getString("web.host"),
-        port = config.getInt("web.port")
-      )
+      binding <- Http().bindAndHandle(handler = routes, interface = appConfig.web.host, port = appConfig.web.port)
 
     } yield binding
 

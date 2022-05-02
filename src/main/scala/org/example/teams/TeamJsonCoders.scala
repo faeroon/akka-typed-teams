@@ -1,13 +1,12 @@
 package org.example.teams
 
 import java.util.UUID
-
 import akka.actor.typed.{ActorRef, ActorRefResolver}
 import io.circe.{Codec, Decoder, Encoder}
 import io.circe.generic.extras.Configuration
 import io.circe.generic.extras.semiauto._
 import org.example.teams.TeamBehavior.Response
-import org.example.teams.request.CreateTeamRequest
+import org.example.teams.request.{AddTeamMemberRequest, CreateTeamRequest}
 
 import scala.util.Try
 
@@ -25,9 +24,6 @@ object TeamJsonCoders {
   // TeamId
   implicit val teamIdEncoder: Encoder[TeamId] = Encoder.encodeString.contramap(_.value)
   implicit val teamIdDecoder: Decoder[TeamId] = Decoder.decodeString.map(TeamId)
-
-  // Member
-  implicit val memberCodec: Codec[Member] = deriveConfiguredCodec[Member]
 
   // Team
   implicit val teamCodec: Codec[Team] = deriveConfiguredCodec[Team]
@@ -51,5 +47,9 @@ object TeamJsonCoders {
 
   // requests
   implicit val createTeamRequestDecoder: Decoder[CreateTeamRequest] = deriveConfiguredDecoder[CreateTeamRequest]
+  implicit val addTeamMemberDecoder: Decoder[AddTeamMemberRequest] = deriveConfiguredDecoder[AddTeamMemberRequest]
+
+  //responses
+  implicit val errorResponseEncoder: Encoder[ErrorResponse] = deriveConfiguredEncoder[ErrorResponse]
 
 }

@@ -13,8 +13,7 @@ services:
       - TEAMS_HOST=teams-node-1
       - TEAMS_ARTERY_PORT=25521
       - TEAMS_WEB_PORT=7575
-      - TEAMS_CASSANDRA_HOST=teams-cassandra
-      - TEAMS_CASSANDRA_PORT=9042
+      - TEAMS_CASSANDRA_NODES=teams-cassandra:9042
       - TEAMS_SEED_NODES.0=akka://WebApp@teams-node-1:25521
       - TEAMS_SEED_NODES.1=akka://WebApp@teams-node-2:25521
   teams-node-2:
@@ -29,12 +28,14 @@ services:
       - TEAMS_HOST=teams-node-2
       - TEAMS_ARTERY_PORT=25521
       - TEAMS_WEB_PORT=7575
-      - TEAMS_CASSANDRA_HOST=teams-cassandra
-      - TEAMS_CASSANDRA_PORT=9042
+      - TEAMS_CASSANDRA_NODES=teams-cassandra:9042
       - TEAMS_SEED_NODES.0=akka://WebApp@teams-node-1:25521
       - TEAMS_SEED_NODES.1=akka://WebApp@teams-node-2:25521
   teams-cassandra:
     container_name: teams-cassandra
     image: cassandra:3.11
+    volumes:
+      - "./cassandra-init.sh:/cassandra-init.sh"
+    command: "sh /cassandra-init.sh"
     ports:
     - "9042:9042"

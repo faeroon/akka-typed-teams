@@ -5,4 +5,4 @@ import java.util.UUID
 /**
  * @author Denis Pakhomov.
  */
-case class CreateTeamRequest(teamId: String, leader: UUID)
+case class AddTeamMemberRequest(memberId: UUID)
